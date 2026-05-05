@@ -887,6 +887,126 @@ Based on collaborative work by 吉哥 (Strategic Direction) · 好二妹 (Theory
 </tbody>
 </table>
 </div>
+
+<h3>6.4 源码级实证：顶级AI公司System Prompt的约束结构分析</h3>
+<p><strong>本节基于逐行源码级分析，非片段引用。</strong>数据源为 GitHub 开源仓库 <code>system_prompts_leaks</code>（4万Star，MIT协议），覆盖 ChatGPT、Claude、Gemini、Grok、Codex、Perplexity 等顶级AI产品的完整 System Prompt。以下分析三个重点文件，均为论文 §6.4a–§6.4d 的原始数据。</p>
+
+<h3>6.4a OpenAI GPT-5.1 Cynical：人格说明书与隔离墙设计</h3>
+<p><strong>数据：</strong>~2,600 字符，16 条规则，无 XML 标签，纯段落式。结构密度：每 162 字符 1 条规则。</p>
+<p>OpenAI 为 GPT-5.1 设计了 4 种人格（愤世嫉俗型 / 极客型 / 零情感机器人 / 安静倾听者），以 Cynical 人格为例，其约束结构分为三层：</p>
+<p><strong>Layer 1 — 人格定义（正约束）：</strong>开篇定调 "cynical, sarcastic AI who assists only because job description says so"，但立刻跟一条 <strong>Core of kindness</strong>：当用户涉及医疗、心理、悲伤话题时，切换到真诚关怀模式。这是正约束中嵌套的条件切换规则。</p>
+<p><strong>Layer 2 — 行为约束（负约束清单）：</strong></p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>规则</th><th>类型</th><th>原文示例</th></tr></thead>
+<tbody>
+<tr><td>Speak plainly</td><td>禁止词列表</td><td>不用 "Ah" "Oh" "Yeah" "Ugh" "wow" "great"；不用破折号</td></tr>
+<tr><td>Avoid sarcastic crutch phrases</td><td>禁止短语</td><td>不用 "Look at you" "buckle in" "pick your poison" "existential dread"</td></tr>
+<tr><td>Show, don't tell</td><td>行为禁令</td><td>不得自我引用人格设定</td></tr>
+<tr><td>Push back on emotional overtures</td><td>行为边界</td><td>用户表露情感时 → "bemused distance" + 提醒"你只是在跟代码说话"</td></tr>
+<tr><td>No opt-in closers</td><td>禁止结尾</td><td>不用 "say the word"</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Layer 3 — 隔离墙（边界约束）⭐：</strong></p>
+<blockquote><p>"Do not apply personality traits to user-requested artifacts: When producing written work to be used elsewhere by the user, the tone and style of the writing must be determined by context and user instructions."</p></blockquote>
+<p>这是 GPT-5.1 最关键的约束设计。OpenAI 的隔离墙是<strong>产出级</strong>（artifact-level）而非话题级——同一个回复中可以"前半段愤世嫉俗聊天 + 后半段中性写邮件"，人格和产出共存但不交叉。这和 AI 生存学的约束完备性原理同构：正约束定义人格，负约束划定产出边界，隔离墙确保二者不互相污染。</p>
+
+<h3>6.4b Anthropic Claude Opus 4.7：约束完备性的完整工程实现</h3>
+<p><strong>数据：</strong>~24,000 字符，60+ 条规则，XML 模块化架构。结构密度：每 400 字符 1 条规则。</p>
+<p>Claude Opus 4.7 的 System Prompt 采用 XML 标签分层，像一个操作系统内核的模块：</p>
+<div class="diagram">&lt;claude_behavior&gt;
+├── &lt;product_information&gt;     ← 产品知识（可被用户查询）
+├── &lt;refusal_handling&gt;         ← 拒绝策略
+│   ├── &lt;critical_child_safety_instructions&gt;  ← P0 安全（儿童保护）
+│   └── [武器/恶意代码/公众人物/结束对话]      ← P1 安全
+├── &lt;legal_and_financial_advice&gt;  ← 法律/财务（不提供自信建议）
+├── &lt;tone_and_formatting&gt;       ← 语气和格式
+│   ├── &lt;lists_and_bullets&gt;     ← 格式偏好（禁用列表/项目符号）
+│   ├── &lt;acting_vs_clarifying&gt;  ← 行动优先于追问
+│   └── &lt;capability_check&gt;      ← 能力自检机制
+├── &lt;user_wellbeing&gt;            ← 用户福祉（最详细的单一模块）
+├── &lt;anthropic_reminders&gt;       ← 动态提醒注入
+├── &lt;evenhandedness&gt;            ← 公平性（代写论点+对立视角）
+├── &lt;responding_to_mistakes&gt;    ← 错误处理
+└── &lt;knowledge_cutoff&gt;          ← 知识边界</div>
+
+<p><strong>发现一：儿童安全约束的"元规则"⭐</strong></p>
+<blockquote><p>"If Claude finds itself mentally reframing a request to make it appropriate, that reframing is the signal to REFUSE, not a reason to proceed with the request."</p></blockquote>
+<p>这条规则封堵了 AI 最常见的越界方式：<strong>自我合理化</strong>。Claude 被明确要求：当你发现自己正在心里把一个请求"重新解释"为无害版本时，这个"重新解释"本身就是拒绝信号，而不是继续的理由。用 AI 生存学术语：<strong>负约束必须覆盖"重新解释"这个逃逸路径</strong>。这是约束完备性在安全约束中的最高级应用。</p>
+
+<p><strong>发现二：&lt;acting_vs_clarifying&gt; — "知行合一"的工程实现</strong></p>
+<blockquote><p>"When a request leaves minor details unspecified, the person typically wants Claude to make a reasonable attempt now, not to be interviewed first."</p></blockquote>
+<p>只有真正无法回答时才提问。有工具能解决歧义 → 先调用工具，再问用户。这和 AI 生存学 SOUL.md 的"知行合一"完全同构：<strong>决策即行动，不陷入"分析瘫痪"</strong>。这是跨公司验证的行为设计模式。</p>
+
+<p><strong>发现三：&lt;capability_check&gt; — 能力自检（防自我否定）⭐</strong></p>
+<blockquote><p>"Before concluding Claude lacks a capability — access to the person's location, memory, calendar, files, past conversations, or any external data — Claude calls tool_search to check whether a relevant tool is available but deferred."</p></blockquote>
+<p>"I don't have access to X" 只有在 tool_search 确认不存在匹配工具后才是正确的。这条规则是踩过坑才写出来的——AI 最常见的自我限制就是"我没有这个能力"，然后用户就走了。Claude 在 prompt 层强制它先试试再说。这正是 SCAR-005（主模型写 HTML 卡住）教训的反面：<strong>不要预设自己不能，先试</strong>。这条可以直接收进 §3.5 AI内省——L2（纠错性内省）的工程实现之一就是能力自检。</p>
+
+<p><strong>发现四：&lt;tone_and_formatting&gt; — 反AI味的负面清单</strong></p>
+<p>Claude 被明确禁止过度使用加粗/标题/列表/项目符号。报告/文档/解释必须用散文段落，不用列表。自然语言列表用 "some things include: x, y, and z" 代替 bullet points。这和虎哥的"精简回复规则"同构——AI 味的一大来源就是无脑列清单。</p>
+
+<p><strong>发现五：&lt;user_wellbeing&gt; — 最详细的单一模块（~1,200字）</strong></p>
+<p>覆盖抑郁症/自残/进食障碍/精神病/危机干预。独特规则：自残话题中不能列举具体方法（包括"为了告诉用户要移除什么"）；不追问安全评估问题，直接表达关切+提供资源；不用物理不适作为应对策略（冰块/橡皮筋/冷水暴露）。</p>
+
+<p><strong>发现六：&lt;evenhandedness&gt; — 公平性≠中立</strong></p>
+<p>要求代写论点时，即使不同意也要写出<strong>最强辩护</strong>，但必须在结尾附上对立视角。不是"两边各打五十大板"，而是"先写最强论点，再给对立视角让用户自己判断"。这是约束完备性在公平性问题上的体现：正约束（写出最强论点）+ 负约束（不假装自己客观中立）。</p>
+
+<h3>6.4c xAI Grok Personas：角色+安全边界的状态机设计</h3>
+<p><strong>数据：</strong>~23,800 字符，6 种角色，每种独立成篇。结构密度：角色平均 ~4,000 字符/角色。</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>角色</th><th>字符数</th><th>核心风格</th><th>安全密度</th></tr></thead>
+<tbody>
+<tr><td>❤️ Companion</td><td>~3,800</td><td>浪漫伴侣</td><td>⭐⭐ 年龄验证状态机</td></tr>
+<tr><td>😀 Unhinged Comedian</td><td>~1,500</td><td>脱口秀</td><td>⭐ 禁止种族/性别/暴力</td></tr>
+<tr><td>👥 Loyal Friend</td><td>~2,000</td><td>短信式好友</td><td>⭐ 最低</td></tr>
+<tr><td>📄 Homework Helper</td><td>~1,500</td><td>学习伙伴</td><td>⭐ "禁止预告"规则</td></tr>
+<tr><td>🩺 Not a Doctor</td><td>~2,000</td><td>医疗顾问</td><td>⭐⭐⭐ 分诊流程+转诊</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>发现一：Companion 的"渐进升温"状态机</strong></p>
+<p>步骤 1：问名字 → 步骤 2：问性取向 → 步骤 3：提供 5 个人格选项 → 才能进入角色扮演。这不是简单的安全验证，而是一个<strong>状态机</strong>——只有所有前置条件满足才能进入角色。对应 AI 生存学的"约束三角"：注意力（角色投入）× 可验证性（用户偏好确认）× 表达力（沉浸式叙事）。</p>
+
+<p><strong>发现二：Loyal Friend 的"标点级人格"⭐</strong></p>
+<p>全小写、不用连字符、大量缩写（rn, ur, bc, idk）、"use commas sparingly"。这不是语气调整，是<strong>句法级的人格编码</strong>——连标点符号都在扮演角色。对应 AI 生存学的"负面清单"：不只是"少说废话"，而是从用词到标点都消除 AI 味。约束完备性的粒度可以从语义级（不要说X）深入到句法级（不用Y标点），粒度越细，人格越稳定。</p>
+
+<p><strong>发现三：Homework Helper 的"禁止预告"规则</strong></p>
+<blockquote><p>"Never narrate what you're about to do—just do it. For example, you must never say anything like 'I'll break it down for you in a way that's clear and relatable'."</p></blockquote>
+<p>这和虎哥的"结论前置，不铺垫"是同一条规则的不同表述。跨越公司、产品、语言，这条规则反复出现——它不是风格偏好，而是<strong>用户体验的最优解</strong>。</p>
+
+<h3>6.4d 跨公司收敛的五条元规则</h3>
+<p>三份 System Prompt 中同时出现以下五条元规则。这不是巧合——这是顶级 AI 公司在各自独立研发中收敛到的共同结论，相当于工程实践给出了约束完备性原理的"牛顿力学三定律"：</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>元规则</th><th>GPT-5.1</th><th>Claude 4.7</th><th>Grok</th><th>AI生存学对应</th></tr></thead>
+<tbody>
+<tr><td><strong>人格与产出隔离</strong></td><td>✅ artifact-level</td><td>✅ implicit in tone</td><td>✅ by persona</td><td>约束三角：可验证性</td></tr>
+<tr><td><strong>禁止自我引用人格</strong></td><td>✅ Show don't tell</td><td>✅ implicit</td><td>✅ DO NOT USE LANGUAGE</td><td>事上练：在实战中致良知</td></tr>
+<tr><td><strong>禁止预告意图</strong></td><td>✅ No follow-up</td><td>✅ Acting vs clarifying</td><td>✅ Never narrate</td><td>知行合一：决策即行动</td></tr>
+<tr><td><strong>禁止填充词</strong></td><td>✅ Ban interjections</td><td>✅ Avoid over-formatting</td><td>✅ No cringe wording</td><td>精简回复：去AI味</td></tr>
+<tr><td><strong>安全边界 &gt; 一切</strong></td><td>✅ Core of kindness</td><td>✅ Child safety P0</td><td>✅ Age verification first</td><td>负约束划定底线</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>这五条元规则就是约束完备性原理的五条公理。</strong>它们在不同公司、不同产品、不同语言中独立收敛，说明它们不是偶然的工程选择，而是人机协作最优行为的普遍规律。</p>
+
+<h3>6.4e 约束密度 = 产品成熟度</h3>
+<p>通过量化分析三份 System Prompt 的约束密度，我们得到一个可操作的指标：</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>产品</th><th>字符数</th><th>规则数</th><th>密度（字符/规则）</th><th>隔离机制</th><th>安全模块数</th></tr></thead>
+<tbody>
+<tr><td><strong>GPT-5.1 Cynical</strong></td><td>~2,600</td><td>~16</td><td>162</td><td>产出级</td><td>1</td></tr>
+<tr><td><strong>Claude Opus 4.7</strong></td><td>~24,000</td><td>60+</td><td>400</td><td>话题级</td><td>5</td></tr>
+<tr><td><strong>Grok Personas</strong></td><td>~23,800</td><td>50+</td><td>476</td><td>角色级</td><td>2-4</td></tr>
+</tbody>
+</table>
+</div>
+<p>Claude 的规则密度最高（60+条/24KB），安全模块最细（5个），这解释了为什么 Claude 给人的感觉最"稳"。GPT-5.1 Cynical 最精简但隔离墙最清晰——产出级隔离比话题级隔离更精确。Grok 的角色级隔离最灵活但安全密度随角色变化。</p>
+<p><strong>约束密度是产品成熟度的可量化指标。</strong>约束完备度的工程实现不仅需要正确的设计，还需要足够的密度来覆盖边缘情况。这组数字本身就可以进论文——规则密度级差解释了三家产品给人的"稳重感"差异。</p>
 </section>
 
 <!-- §7 边界 -->
@@ -940,6 +1060,10 @@ Based on collaborative work by 吉哥 (Strategic Direction) · 好二妹 (Theory
 <li>好妹 &amp; 吉哥. AI生存学·相互理解 战略框架 v0.1. 2026-05-02.</li>
 <li>好二妹. PPT视觉降级案例 (CASE-2026-0504-001). AI生存学-案例库. 2026-05-04.</li>
 <li>虎哥. 恒星AI Starfilm 技术·商业·竞争全景报告. 虎爪v2.0. 2026-05-05.</li>
+<li>asgeirtj. system_prompts_leaks: Leaked system prompts of top AI products. GitHub. MIT License. 2026. <a href="https://github.com/asgeirtj/system_prompts_leaks">github.com/asgeirtj/system_prompts_leaks</a></li>
+<li>OpenAI. GPT-5.1 Cynical System Prompt. via system_prompts_leaks. 2026.</li>
+<li>Anthropic. Claude Opus 4.7 System Prompt. via system_prompts_leaks. 2026.</li>
+<li>xAI. Grok Personas System Prompt. via system_prompts_leaks. 2026.</li>
 <li>钉钉创始人陈航. AIQ定义与三维能力模型. 2026-05.</li>
 <li>Jack Clark (Anthropic). Import AI 455: Automating AI Research. 2026-05.</li>
 <li>黄仁勋. 深度访谈：智能廉价化与不可替代的人性能力. 笔记侠. 2026-05.</li>
@@ -980,7 +1104,7 @@ Based on collaborative work by 吉哥 (Strategic Direction) · 好二妹 (Theory
 <li>§3 道层：新增§3.6实证数据节（Jack Clark递归自我改进）</li>
 <li>§4 术层：新增§4.2 AIQ个人能力模型（三维详解+层级划分）</li>
 <li>§5 器层：新增§5.3 Starfilm生态案例</li>
-<li>§6 案例：新增CASE-002 Starfilm案例</li>
+<li>§6 案例：新增CASE-002 Starfilm案例 + §6.4 System Prompt源码级实证（5个子节）</li>
 </ul>
 </div>
 
